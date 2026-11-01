@@ -2,8 +2,6 @@
 
 **25 LLM inference interview questions, each with a guided animated lesson, an interactive simulator, a formula card, a runnable lab and a timed interview drill.**
 
-🔗 **Live site:** https://rishabh135.github.io/visualizing_llm_questions/ (goes live once GitHub Pages is enabled — see Delivery below)
-
 ```bash
 npm install && npm run dev
 ```
@@ -75,8 +73,8 @@ Legend: ✅ done and verified · ⚠️ done, partly verified · ❌ not done (r
 
 ### Delivery
 - ✅ Source pushed to https://github.com/rishabh135/visualizing_llm_questions
-- ✅ GitHub Actions build job passes on GitHub: install → typecheck → 143 tests → build → Python lab tests
-- ⚠️ Deploy job waits on one manual step: **Settings → Pages → Source: GitHub Actions**, then re-run the workflow
+- ✅ GitHub Actions CI on every push: install → typecheck → 143 tests → build → Python lab tests
+- ➖ No hosted site by choice; run locally with `npm run dev`, or serve `dist/` from any static host
 - ✅ `build-visual-artifacts` Claude Code skill bundled in `.claude/skills/`
 - ❌ MP4/WebM video export — no render pipeline here; scene data is export-ready, no video file exists
 - ⚠️ `package-lock.json` not committed (the local one points at a private npm mirror); all direct dependencies are pinned to exact versions
