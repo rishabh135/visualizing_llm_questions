@@ -1,0 +1,4 @@
+interface:
+  display_name: "Visual Artifacts"
+  short_description: "Create clear, animated diagrams and carousel artifacts"
+  default_prompt: "Use $build-visual-artifacts to create a readable dark React carousel with an interactive workflow and a reconciled Sankey chart."

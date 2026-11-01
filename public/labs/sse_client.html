@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SSE Client Lab</title>
+<style>
+  :root { --bg:#0b0f14; --surface:#141c27; --text:#e6edf3; --muted:#aab8c7; --border:#64748b; --accent:#a78bfa; --ok:#5eead4; --err:#fda4af; color-scheme: dark; }
+  body { margin:0; background:var(--bg); color:var(--text); font:17px/1.6 ui-sans-serif, system-ui, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 32px 16px; display:grid; gap:16px; }
+  label { display:grid; gap:4px; font-size:15px; }
+  input, textarea, button { font:inherit; color:var(--text); background:var(--surface); border:1px solid var(--border); border-radius:9px; padding:8px 12px; min-height:44px; }
+  button { cursor:pointer; } button:disabled { opacity:.5; cursor:not-allowed; }
+  .primary { background:var(--accent); color:#1e1036; border-color:var(--accent); font-weight:600; }
+  .row { display:flex; gap:12px; flex-wrap:wrap; align-items:end; }
+  pre { background:#070a0e; border:1px solid #334155; border-radius:12px; padding:16px; white-space:pre-wrap; min-height:120px; margin:0; }
+  #log { font-size:14px; color:var(--muted); max-height:260px; overflow:auto; }
+  :focus-visible { outline:3px solid #c4b5fd; outline-offset:2px; }
+  .ok { color:var(--ok); } .err { color:var(--err); }
+</style>
+</head>
+<body>
+<main>
+  <h1>SSE streaming client</h1>
+  <p>POST with <code>fetch</code> (EventSource only supports GET and cannot send an auth body). Bytes are decoded with a streaming <code>TextDecoder</code> and framed across arbitrary chunk boundaries.</p>
+  <label>Prompt <textarea id="prompt" rows="2">Explain KV cache in one line</textarea></label>
+  <div class="row">
+    <label>Max tokens <input id="max" type="number" value="40" min="1" max="4096" /></label>
+    <label>Deadline (s) <input id="deadline" type="number" value="30" min="0.01" step="0.5" /></label>
+    <button id="go" class="primary">Generate</button>
+    <button id="stop" disabled>Cancel</button>
+  </div>
+  <p id="status" role="status">Idle.</p>
+  <h2>Output</h2>
+  <pre id="out" aria-live="off"></pre>
+  <h2>Event log</h2>
+  <pre id="log"></pre>
+</main>
+<script>
+// Incremental SSE parser: feed() any text chunk; complete events are emitted, partial ones are buffered.
+// Handles CRLF, CR and LF line endings, multi-line data, comments (heartbeats) and id/event fields.
+function createSSEParser(onEvent, maxBuffer = 1 << 20) {
+  let buf = '', data = [], event = 'message', id = null;
+  function line(l) {
+    if (l === '') { if (data.length) onEvent({ event, id, data: data.join('\n') }); data = []; event = 'message'; return; }
+    if (l[0] === ':') { onEvent({ event: 'comment', data: l.slice(1).trim() }); return; }
+    const i = l.indexOf(':');
+    const f = i < 0 ? l : l.slice(0, i);
+    let v = i < 0 ? '' : l.slice(i + 1); if (v[0] === ' ') v = v.slice(1);
+    if (f === 'data') data.push(v); else if (f === 'event') event = v; else if (f === 'id') id = v;
+  }
+  return {
+    feed(text) {
+      buf += text;
+      if (buf.length > maxBuffer) throw new Error('SSE line exceeds buffer limit');
+      // A trailing CR may be the first half of CRLF split across chunks: keep it buffered.
+      let m;
+      while ((m = /\r\n|\n|\r(?!$)/.exec(buf))) { line(buf.slice(0, m.index)); buf = buf.slice(m.index + m[0].length); }
+    },
+  };
+}
+
+const $ = (id) => document.getElementById(id);
+let ctrl = null;
+function log(msg, cls = '') { const s = document.createElement('span'); s.className = cls; s.textContent = msg + '\n'; $('log').append(s); $('log').scrollTop = 1e9; }
+
+$('go').onclick = async () => {
+  $('out').textContent = ''; $('log').textContent = '';
+  ctrl = new AbortController();
+  $('go').disabled = true; $('stop').disabled = false; $('status').textContent = 'Streaming…';
+  const t0 = performance.now(); let first = null, n = 0;
+  try {
+    const res = await fetch('/generate', {
+      method: 'POST', signal: ctrl.signal, headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: $('prompt').value, max_tokens: +$('max').value, deadline_s: +$('deadline').value }),
+    });
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    const reader = res.body.getReader();
+    const dec = new TextDecoder('utf-8'); // {stream:true} keeps split multi-byte characters intact
+    const p = createSSEParser((ev) => {
+      if (ev.event === 'comment') { log(': ' + ev.data); return; }
+      const d = JSON.parse(ev.data);
+      log(`#${ev.id} ${ev.event} ${ev.data}`, ev.event === 'error' ? 'err' : ev.event === 'done' ? 'ok' : '');
+      if (ev.event === 'token') { if (first === null) first = performance.now() - t0; n++; $('out').textContent += d.text; }
+    });
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) { p.feed(dec.decode()); break; }
+      p.feed(dec.decode(value, { stream: true }));
+    }
+    $('status').textContent = `Done: ${n} token events, first token after ${first?.toFixed(0) ?? '—'} ms.`;
+  } catch (e) {
+    $('status').textContent = e.name === 'AbortError' ? 'Cancelled by client (server cancels by request id on disconnect).' : 'Error: ' + e.message;
+  } finally {
+    $('go').disabled = false; $('stop').disabled = true; ctrl = null;
+  }
+};
+$('stop').onclick = () => ctrl?.abort();
+</script>
+</body>
+</html>
